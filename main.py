@@ -8,10 +8,11 @@ from datetime import datetime, timezone
 
 FINNHUB_API_KEY = getenv("FINNHUB_API_KEY")
 
-TICKER = "AAPL"
+FINNHUB_TICKER = "BINANCE:BTCUSDT"
+YF_TICKER = "BTC-USDT"
 TRADING_DAYS_PER_YEAR = 252
 N = 100000 # number of simulations
-mu = 0.00414 # annualised drift (risk-free rate)
+r = 0.00414 # annualised drift (risk-free rate)
 K = 270 # strike price
 expiry = datetime(2026,1,1, tzinfo=timezone.utc)
 LAMBDA = 0.94 # how reactive is sigma
@@ -25,27 +26,33 @@ def get_span(lambda_):
     return 2 / (1 - lambda_) - 1
 
 def calculate_sigma(): # annualised volatility
-    data = yf.download(TICKER, period="1y")
+    data = yf.download(YF_TICKER, period="1y")
     
     if isinstance(data.columns, pd.MultiIndex):
-        close = data[("Close", TICKER)]
+        close = data[("Close", YF_TICKER)]
     else:
         close = data["Close"]
 
     logr = np.log(close / close.shift(1)).dropna() # r_t = ln P_t/P_{t-1}
     sigma_daily = logr.ewm(span=get_span(LAMBDA)).std().iloc[-1]
-    sigma = sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
-    print("sigma = ", sigma)
-    return sigma
-
-sigma = calculate_sigma()
+    return sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
     
+sigma = 0.2 #calculate_sigma()
+    
+def mc_option_price(S_0):
+    T = time_to_maturity()
+    S_T = calculate_S_T(S_0, T) # N simulatd GBM future prices
+    payoffs = np.exp(-r*T) * np.maximum(S_T-K, 0.0) # risk-neutral valuation formula
+    price = payoffs.mean() # MC estimate of option fair price
+    se = payoffs.std(ddof=1) / np.sqrt(N)
+    ci_95 = (price - 1.96*se, price + 1.96*se)
+    return price, se, ci_95
 
 def calculate_S_T(S_0, T):
-    Z = np.random.normal(0,1, size=N)
+    Z = np.random.normal(0,1, N)
     W_T = np.sqrt(T) * Z
 
-    return S_0 * np.exp((mu - 0.5* sigma**2)*T + sigma*W_T)
+    return S_0 * np.exp((r - 0.5* sigma**2)*T + sigma*W_T)
 
 def main():
     print(FINNHUB_API_KEY)
@@ -61,12 +68,13 @@ def print_prices():
             trades = msg["data"]
             if trades:
                 S_0 = trades[-1]["p"] # last available price
-                S_T = calculate_S_T(S_0, time_to_maturity())
-                now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                print(f"{now}: S_0 = {S_0}, S_T = {S_T}")
+                print(f"{datetime.now(timezone.utc)}: {S_0}")
+                price, se, ci_95 = mc_option_price(S_0)
+                l, r = ci_95
+                print(f"Monte Carlo price: {price:.2f} +- {1.96*se:.4f} (95% confidence interval: {l:.2f}, {r:.2f})")
 
     def on_open(ws):
-        ws.send(json.dumps({"type": "subscribe", "symbol": "AAPL"}))
+        ws.send(json.dumps({"type": "subscribe", "symbol": FINNHUB_TICKER}))
 
     def on_close(ws):
         print("closed connection")
