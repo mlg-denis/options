@@ -9,11 +9,11 @@ from datetime import datetime, timezone
 FINNHUB_API_KEY = getenv("FINNHUB_API_KEY")
 
 FINNHUB_TICKER = "BINANCE:BTCUSDT"
-YF_TICKER = "BTC-USDT"
+YF_TICKER = "BTC-USD"
 TRADING_DAYS_PER_YEAR = 252
 N = 100000 # number of simulations
 r = 0.00414 # annualised drift (risk-free rate)
-K = 270 # strike price
+K = 100000 # strike price (USD)
 expiry = datetime(2026,1,1, tzinfo=timezone.utc)
 LAMBDA = 0.94 # how reactive is sigma
 
@@ -37,11 +37,11 @@ def calculate_sigma(): # annualised volatility
     sigma_daily = logr.ewm(span=get_span(LAMBDA)).std().iloc[-1]
     return sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
     
-sigma = 0.2 #calculate_sigma()
+sigma = calculate_sigma()
     
 def mc_option_price(S_0):
     T = time_to_maturity()
-    S_T = calculate_S_T(S_0, T) # N simulatd GBM future prices
+    S_T = calculate_S_T(S_0, T) # N simulated GBM future prices
     payoffs = np.exp(-r*T) * np.maximum(S_T-K, 0.0) # risk-neutral valuation formula
     price = payoffs.mean() # MC estimate of option fair price
     se = payoffs.std(ddof=1) / np.sqrt(N)
@@ -61,14 +61,12 @@ def main():
 def print_prices():
     def on_message(ws, message):
         msg = json.loads(message)
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        print(f"{now}: Data received")
-
         if msg.get("type") == "trade" and "data" in msg:
             trades = msg["data"]
             if trades:
                 S_0 = trades[-1]["p"] # last available price
-                print(f"{datetime.now(timezone.utc)}: {S_0}")
+                now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                print(f"{now}: {S_0}")
                 price, se, ci_95 = mc_option_price(S_0)
                 l, r = ci_95
                 print(f"Monte Carlo price: {price:.2f} +- {1.96*se:.4f} (95% confidence interval: {l:.2f}, {r:.2f})")
