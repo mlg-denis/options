@@ -12,8 +12,14 @@ TICKER = "AAPL"
 TRADING_DAYS_PER_YEAR = 252
 N = 100000 # number of simulations
 mu = 0.00414 # annualised drift (risk-free rate)
-T = 1.0 # time horizon (years)
+K = 270 # strike price
+expiry = datetime(2026,1,1, tzinfo=timezone.utc)
 LAMBDA = 0.94 # how reactive is sigma
+
+def time_to_maturity():
+    now = datetime.now(timezone.utc)
+    days = (expiry-now).days
+    return max(days, 0) / TRADING_DAYS_PER_YEAR
 
 def get_span(lambda_):
     return 2 / (1 - lambda_) - 1
@@ -28,13 +34,14 @@ def calculate_sigma(): # annualised volatility
 
     logr = np.log(close / close.shift(1)).dropna() # r_t = ln P_t/P_{t-1}
     sigma_daily = logr.ewm(span=get_span(LAMBDA)).std().iloc[-1]
-    sigma = sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR) 
+    sigma = sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
+    print("sigma = ", sigma)
     return sigma
 
 sigma = calculate_sigma()
     
 
-def calculate_S_T(S_0: float):
+def calculate_S_T(S_0, T):
     Z = np.random.normal(0,1, size=N)
     W_T = np.sqrt(T) * Z
 
@@ -54,7 +61,7 @@ def print_prices():
             trades = msg["data"]
             if trades:
                 S_0 = trades[-1]["p"] # last available price
-                S_T = calculate_S_T(S_0)
+                S_T = calculate_S_T(S_0, time_to_maturity())
                 now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
                 print(f"{now}: S_0 = {S_0}, S_T = {S_T}")
 
