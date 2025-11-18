@@ -13,8 +13,12 @@ TRADING_DAYS_PER_YEAR = 252
 N = 100000 # number of simulations
 mu = 0.00414 # annualised drift (risk-free rate)
 T = 1.0 # time horizon (years)
+LAMBDA = 0.94 # how reactive is sigma
 
-def calculate_sigma():
+def get_span(lambda_):
+    return 2 / (1 - lambda_) - 1
+
+def calculate_sigma(): # annualised volatility
     data = yf.download(TICKER, period="1y")
     
     if isinstance(data.columns, pd.MultiIndex):
@@ -23,7 +27,7 @@ def calculate_sigma():
         close = data["Close"]
 
     logr = np.log(close / close.shift(1)).dropna() # r_t = ln P_t/P_{t-1}
-    sigma_daily = logr.std(ddof=1)
+    sigma_daily = logr.ewm(span=get_span(LAMBDA)).std().iloc[-1]
     sigma = sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR) 
     return sigma
 
