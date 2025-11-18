@@ -1,4 +1,6 @@
 import numpy as np
+import pandas as pd
+import yfinance as yf
 import websocket, json
 from os import getenv
 from time import sleep
@@ -6,10 +8,27 @@ from datetime import datetime, timezone
 
 FINNHUB_API_KEY = getenv("FINNHUB_API_KEY")
 
+TICKER = "AAPL"
+TRADING_DAYS_PER_YEAR = 252
 N = 100000 # number of simulations
 mu = 0.00414 # annualised drift (risk-free rate)
-sigma = 0.2 # annualised volatlity
 T = 1.0 # time horizon (years)
+
+def calculate_sigma():
+    data = yf.download(TICKER, period="1y")
+    
+    if isinstance(data.columns, pd.MultiIndex):
+        close = data[("Close", TICKER)]
+    else:
+        close = data["Close"]
+
+    logr = np.log(close / close.shift(1)).dropna() # r_t = ln P_t/P_{t-1}
+    sigma_daily = logr.std(ddof=1)
+    sigma = sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR) 
+    return sigma
+
+sigma = calculate_sigma()
+    
 
 def calculate_S_T(S_0: float):
     Z = np.random.normal(0,1, size=N)
@@ -46,7 +65,7 @@ def print_prices():
 
     while True:
         try:
-            ws.run_forever()    
+            ws.run_forever(ping_interval=5)    
         except Exception as e:
             print("Error: ", e)
             sleep(5)
