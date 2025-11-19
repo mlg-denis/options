@@ -11,7 +11,7 @@ FINNHUB_API_KEY = getenv("FINNHUB_API_KEY")
 FINNHUB_TICKER = "BINANCE:BTCUSDT"
 YF_TICKER = "BTC-USD"
 TRADING_DAYS_PER_YEAR = 252
-N = 100000 # number of simulations
+N = 10000000 # number of simulations
 r = 0.00414 # annualised drift (risk-free rate)
 K = 100000 # strike price (USD)
 expiry = datetime(2026,1,1, tzinfo=timezone.utc)
@@ -66,10 +66,9 @@ def print_prices():
             if trades:
                 S_0 = trades[-1]["p"] # last available price
                 now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                print(f"{now}: {S_0}")
                 price, se, ci_95 = mc_option_price(S_0)
                 l, r = ci_95
-                print(f"Monte Carlo price: {price:.2f} +- {1.96*se:.4f} (95% confidence interval: {l:.2f}, {r:.2f})")
+                print(f"{now}: ${price:.2f} +- ${1.96*se:.2f} (95% confidence interval: ${l:.2f}, ${r:.2f})")
 
     def on_open(ws):
         ws.send(json.dumps({"type": "subscribe", "symbol": FINNHUB_TICKER}))
