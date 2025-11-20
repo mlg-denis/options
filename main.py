@@ -5,6 +5,8 @@ import websocket, json
 from os import getenv
 from time import sleep
 from datetime import datetime, timezone
+from math import log, sqrt, exp
+from scipy.stats import norm
 
 FINNHUB_API_KEY = getenv("FINNHUB_API_KEY")
 FINNHUB_TICKER = "BINANCE:BTCUSDT"
@@ -20,8 +22,8 @@ Z = np.random.normal(0, 1, N)
 
 def time_to_maturity():
     now = datetime.now(timezone.utc)
-    days = (expiry-now) / 86400.0
-    return max(days, 0) / TRADING_DAYS_PER_YEAR
+    days = (expiry-now).total_seconds() / 86400.0
+    return max(days, 0.0) / TRADING_DAYS_PER_YEAR
 
 def get_span(lambda_):
     return 2 / (1 - lambda_) - 1
@@ -59,7 +61,6 @@ def mc_price(S_0, T, sigma_):
     return price
 
 def delta_gamma(S_0, T, sigma_, h=None):
-    # choose a relative step if not provided
     if h is None:
         h = max(1e-4 * S_0, 0.01)   # relative 0.01% or at least 0.01 USD
     p_plus  = mc_price(S_0 + h, T, sigma_)
@@ -70,13 +71,23 @@ def delta_gamma(S_0, T, sigma_, h=None):
     return delta, gamma
 
 def vega(S0, T, sigma_, h_sigma=None):
-    # h_sigma in absolute vol (e.g. 0.01 = 1 vol point)
     if h_sigma is None:
         h_sigma = max(1e-4, 0.01 * sigma_)
     p_plus  = mc_price(S0, T, sigma_ + h_sigma)
     p_minus = mc_price(S0, T, sigma_ - h_sigma)
     vega = (p_plus - p_minus) / (2 * h_sigma)
     return vega
+
+def black_scholes(S_0, T, sigma):
+    if T <= 0:
+        return (max(S_0-K,0.0), 1.0 if S_0>K else 0.0, 0.0, 0.0)
+    d1 = (log(S_0/K) + (r + 0.5*sigma*sigma)*T) / (sigma*sqrt(T))
+    d2 = d1 - sigma*sqrt(T)
+    price = S_0 * norm.cdf(d1) - K*exp(-r*T)*norm.cdf(d2)
+    delta = norm.cdf(d1)
+    gamma = norm.pdf(d1) / (S_0 * sigma * sqrt(T))
+    vega = S_0 * norm.pdf(d1) * sqrt(T)    # per 1.0 vol unit
+    return price, delta, gamma, vega
 
 def main():
     print(FINNHUB_API_KEY)
@@ -93,12 +104,13 @@ def print_prices():
                 T = time_to_maturity()
 
                 price = mc_price(S_0, T, sigma)
-                delta, gamma = delta_gamma(S_0, T, sigma)
-                vega = vega(S_0, T, sigma)
+                delta_, gamma_ = delta_gamma(S_0, T, sigma)
+                vega_ = vega(S_0, T, sigma)
 
-                
+                bs_price, bs_delta, bs_gamma, bs_vega = black_scholes(S_0, T, sigma)
 
-                print(f"{now}: ${price:.2f}")
+                print(f"{now}: ${price:.2f} with Delta {delta_:.2f}, Gamma {gamma_:.8f}, Vega {vega_:.2f}")
+                print(price - bs_price, delta_ - bs_delta, gamma_ - bs_gamma, vega_ - bs_vega)
                 # l, r = ci_95
                 # print(f"{now}: ${price:.2f} +- ${1.96*se:.2f} (95% confidence interval: ${l:.2f}, ${r:.2f})")
 
