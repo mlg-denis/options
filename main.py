@@ -37,23 +37,13 @@ def calculate_sigma(): # annualised volatility
     logr = np.log(close / close.shift(1)).dropna() # r_t = ln P_t/P_{t-1}
     sigma_daily = logr.ewm(span=get_span(LAMBDA)).std().iloc[-1]
     return sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
-    
 sigma = calculate_sigma()
     
-def mc_option_price(S_0):
-    T = time_to_maturity()
-    S_T = simulate_terminal_prices(S_0, T) # N simulated GBM future prices
-    payoffs = np.exp(-r*T) * np.maximum(S_T-K, 0.0) # risk-neutral valuation formula
-    price = payoffs.mean() # MC estimate of option fair price
-    se = payoffs.std(ddof=1) / np.sqrt(N)
-    ci_95 = (price - 1.96*se, price + 1.96*se)
-    return price, se, ci_95
-
 # N simulated GBM future prices
-def simulate_terminal_prices(S_0, T):
+def simulate_terminal_prices(S_0, T, sigma_):
     W_T = np.sqrt(T) * Z
-    drift = (r - 0.5 * sigma**2) * T
-    return S_0 * np.exp(drift + sigma*W_T)
+    drift = (r - 0.5 * sigma_**2) * T
+    return S_0 * np.exp(drift + sigma_*W_T)
 
 def price_from_paths(S_T, T):
     payoffs = np.maximum(S_T - K, 0.0)
@@ -63,26 +53,28 @@ def price_from_paths(S_T, T):
     ci_95 = (price - 1.96*se, price + 1.96*se)
     return price, se, ci_95
 
-def mc_price(S_0, T):
-    S_T = simulate_terminal_prices(S_0, T)
-    return price_from_paths(S_T, T)
+def mc_price(S_0, T, sigma_):
+    S_T = simulate_terminal_prices(S_0, T, sigma_)
+    price, _, _ = price_from_paths(S_T, T)
+    return price
 
-def delta_gamma(S0, sigma, T, Z, h=None):
+def delta_gamma(S_0, T, sigma_, h=None):
     # choose a relative step if not provided
     if h is None:
-        h = max(1e-4 * S0, 0.01)   # relative 0.01% or at least 0.01 USD
-    p_plus  = mc_price(S0 + h, sigma, T, Z)
-    p_minus = mc_price(S0 - h, sigma, T, Z)
+        h = max(1e-4 * S_0, 0.01)   # relative 0.01% or at least 0.01 USD
+    p_plus  = mc_price(S_0 + h, T, sigma_)
+    p_minus = mc_price(S_0 - h, T, sigma_)
+    p0      = mc_price(S_0, T, sigma_) 
     delta = (p_plus - p_minus) / (2 * h)
-    gamma = (p_plus - 2 * mc_price(S0, sigma, T, Z) + p_minus) / (h * h)
+    gamma = (p_plus - 2 * p0 + p_minus) / (h * h)
     return delta, gamma
 
-def vega(S0, sigma, T, Z, h_sigma=None):
+def vega(S0, T, sigma_, h_sigma=None):
     # h_sigma in absolute vol (e.g. 0.01 = 1 vol point)
     if h_sigma is None:
-        h_sigma = max(1e-4, 0.01 * sigma)
-    p_plus  = mc_price(S0, sigma + h_sigma, T, Z)
-    p_minus = mc_price(S0, sigma - h_sigma, T, Z)
+        h_sigma = max(1e-4, 0.01 * sigma_)
+    p_plus  = mc_price(S0, T, sigma_ + h_sigma)
+    p_minus = mc_price(S0, T, sigma_ - h_sigma)
     vega = (p_plus - p_minus) / (2 * h_sigma)
     return vega
 
