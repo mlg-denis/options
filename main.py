@@ -42,17 +42,26 @@ sigma = calculate_sigma()
     
 def mc_option_price(S_0):
     T = time_to_maturity()
-    S_T = calculate_S_T(S_0, T) # N simulated GBM future prices
+    S_T = simulate_terminal_prices(S_0, T) # N simulated GBM future prices
     payoffs = np.exp(-r*T) * np.maximum(S_T-K, 0.0) # risk-neutral valuation formula
     price = payoffs.mean() # MC estimate of option fair price
     se = payoffs.std(ddof=1) / np.sqrt(N)
     ci_95 = (price - 1.96*se, price + 1.96*se)
     return price, se, ci_95
 
-def calculate_S_T(S_0, T):
+def simulate_terminal_prices(S_0, T):
     W_T = np.sqrt(T) * Z
+    drift = (r - 0.5 * sigma**2) * T
+    return S_0 * np.exp(drift + sigma*W_T)
 
-    return S_0 * np.exp((r - 0.5* sigma**2)*T + sigma*W_T)
+def price_from_paths(S_T, T):
+    payoffs = np.maximum(S_T - K, 0.0)
+    discounted = np.exp(-r * T) * payoffs
+    return discounted.mean()
+
+def mc_price(S_0, T):
+    S_T = simulate_terminal_prices(S_0, T)
+    return price_from_paths(S_T, T)
 
 def main():
     print(FINNHUB_API_KEY)
