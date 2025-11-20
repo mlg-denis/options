@@ -20,7 +20,7 @@ Z = np.random.normal(0, 1, N)
 
 def time_to_maturity():
     now = datetime.now(timezone.utc)
-    days = (expiry-now).days
+    days = (expiry-now) / 86400.0
     return max(days, 0) / TRADING_DAYS_PER_YEAR
 
 def get_span(lambda_):
@@ -49,13 +49,13 @@ def price_from_paths(S_T, T):
     payoffs = np.maximum(S_T - K, 0.0)
     discounted = np.exp(-r * T) * payoffs # risk-neutral valuation formula
     price = discounted.mean() # estimate of option fair price
-    se = payoffs.std(ddof=1) / np.sqrt(N)
-    ci_95 = (price - 1.96*se, price + 1.96*se)
-    return price, se, ci_95
+    # se = discounted.std(ddof=1) / np.sqrt(N)
+    # ci_95 = (price - 1.96*se, price + 1.96*se)
+    return price
 
 def mc_price(S_0, T, sigma_):
     S_T = simulate_terminal_prices(S_0, T, sigma_)
-    price, _, _ = price_from_paths(S_T, T)
+    price = price_from_paths(S_T, T)
     return price
 
 def delta_gamma(S_0, T, sigma_, h=None):
@@ -90,9 +90,17 @@ def print_prices():
             if trades:
                 S_0 = trades[-1]["p"] # last available price
                 now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                price, se, ci_95 = mc_price(S_0, T=time_to_maturity())
-                l, r = ci_95
-                print(f"{now}: ${price:.2f} +- ${1.96*se:.2f} (95% confidence interval: ${l:.2f}, ${r:.2f})")
+                T = time_to_maturity()
+
+                price = mc_price(S_0, T, sigma)
+                delta, gamma = delta_gamma(S_0, T, sigma)
+                vega = vega(S_0, T, sigma)
+
+                
+
+                print(f"{now}: ${price:.2f}")
+                # l, r = ci_95
+                # print(f"{now}: ${price:.2f} +- ${1.96*se:.2f} (95% confidence interval: ${l:.2f}, ${r:.2f})")
 
     def on_open(ws):
         ws.send(json.dumps({"type": "subscribe", "symbol": FINNHUB_TICKER}))
