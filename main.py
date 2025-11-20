@@ -7,15 +7,16 @@ from time import sleep
 from datetime import datetime, timezone
 
 FINNHUB_API_KEY = getenv("FINNHUB_API_KEY")
-
 FINNHUB_TICKER = "BINANCE:BTCUSDT"
 YF_TICKER = "BTC-USD"
+
 TRADING_DAYS_PER_YEAR = 252
-N = 10000000 # number of simulations
+N = 1000000 # number of simulations
 r = 0.00414 # annualised drift (risk-free rate)
 K = 100000 # strike price (USD)
 expiry = datetime(2026,1,1, tzinfo=timezone.utc)
 LAMBDA = 0.94 # how reactive is sigma
+Z = np.random.normal(0, 1, N)
 
 def time_to_maturity():
     now = datetime.now(timezone.utc)
@@ -49,7 +50,6 @@ def mc_option_price(S_0):
     return price, se, ci_95
 
 def calculate_S_T(S_0, T):
-    Z = np.random.normal(0,1, N)
     W_T = np.sqrt(T) * Z
 
     return S_0 * np.exp((r - 0.5* sigma**2)*T + sigma*W_T)
