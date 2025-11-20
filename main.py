@@ -49,6 +49,7 @@ def mc_option_price(S_0):
     ci_95 = (price - 1.96*se, price + 1.96*se)
     return price, se, ci_95
 
+# N simulated GBM future prices
 def simulate_terminal_prices(S_0, T):
     W_T = np.sqrt(T) * Z
     drift = (r - 0.5 * sigma**2) * T
@@ -56,12 +57,34 @@ def simulate_terminal_prices(S_0, T):
 
 def price_from_paths(S_T, T):
     payoffs = np.maximum(S_T - K, 0.0)
-    discounted = np.exp(-r * T) * payoffs
-    return discounted.mean()
+    discounted = np.exp(-r * T) * payoffs # risk-neutral valuation formula
+    price = discounted.mean() # estimate of option fair price
+    se = payoffs.std(ddof=1) / np.sqrt(N)
+    ci_95 = (price - 1.96*se, price + 1.96*se)
+    return price, se, ci_95
 
 def mc_price(S_0, T):
     S_T = simulate_terminal_prices(S_0, T)
     return price_from_paths(S_T, T)
+
+def delta_gamma(S0, sigma, T, Z, h=None):
+    # choose a relative step if not provided
+    if h is None:
+        h = max(1e-4 * S0, 0.01)   # relative 0.01% or at least 0.01 USD
+    p_plus  = mc_price(S0 + h, sigma, T, Z)
+    p_minus = mc_price(S0 - h, sigma, T, Z)
+    delta = (p_plus - p_minus) / (2 * h)
+    gamma = (p_plus - 2 * mc_price(S0, sigma, T, Z) + p_minus) / (h * h)
+    return delta, gamma
+
+def vega(S0, sigma, T, Z, h_sigma=None):
+    # h_sigma in absolute vol (e.g. 0.01 = 1 vol point)
+    if h_sigma is None:
+        h_sigma = max(1e-4, 0.01 * sigma)
+    p_plus  = mc_price(S0, sigma + h_sigma, T, Z)
+    p_minus = mc_price(S0, sigma - h_sigma, T, Z)
+    vega = (p_plus - p_minus) / (2 * h_sigma)
+    return vega
 
 def main():
     print(FINNHUB_API_KEY)
@@ -75,7 +98,7 @@ def print_prices():
             if trades:
                 S_0 = trades[-1]["p"] # last available price
                 now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                price, se, ci_95 = mc_option_price(S_0)
+                price, se, ci_95 = mc_price(S_0, T=time_to_maturity())
                 l, r = ci_95
                 print(f"{now}: ${price:.2f} +- ${1.96*se:.2f} (95% confidence interval: ${l:.2f}, ${r:.2f})")
 
