@@ -8,7 +8,7 @@ FINNHUB_TICKER = "BINANCE:BTCUSDT"
 YF_TICKER = "BTC-USD"
 
 TRADING_DAYS_PER_YEAR = 252
-N = 25000 # number of simulations
+N = 2500000 # number of simulations
 r = 0.00414 # annualised drift (risk-free rate)
 K = 100000 # strike price (USD)
 expiry = datetime(2026,1,1, tzinfo=timezone.utc)
@@ -55,7 +55,11 @@ def simulate_paths(S0, T, sigma, r, steps):
     sqrt_dt = np.sqrt(dt)
 
     # Generate random shocks (N paths × steps increments)
-    Z = rng.standard_normal(size=(N, steps))
+    half = (N+1) // 2
+    Z_half = rng.standard_normal((half, steps))
+    Z = np.vstack([Z_half, -Z_half])
+    Z = Z[:N]
+
 
     # Precompute drift/vol terms
     drift = (r - 0.5 * sigma**2) * dt
