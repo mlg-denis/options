@@ -1,24 +1,20 @@
-import numpy as np
-import pandas as pd
-import yfinance as yf
-import websocket, json
+import numpy as np, pandas as pd, yfinance as yf, websocket, json, threading, queue
 from os import getenv
 from time import sleep
 from datetime import datetime, timezone
-from math import log, sqrt, exp
-from scipy.stats import norm
 
 FINNHUB_API_KEY = getenv("FINNHUB_API_KEY")
 FINNHUB_TICKER = "BINANCE:BTCUSDT"
 YF_TICKER = "BTC-USD"
 
 TRADING_DAYS_PER_YEAR = 252
-N = 1000000 # number of simulations
+N = 25000 # number of simulations
 r = 0.00414 # annualised drift (risk-free rate)
 K = 100000 # strike price (USD)
 expiry = datetime(2026,1,1, tzinfo=timezone.utc)
 LAMBDA = 0.94 # how reactive is sigma
-Z = np.random.normal(0, 1, N)
+
+price_queue = queue.Queue(maxsize=1)
 
 def time_to_maturity():
     now = datetime.now(timezone.utc)
@@ -40,79 +36,57 @@ def calculate_sigma(): # annualised volatility
     sigma_daily = logr.ewm(span=get_span(LAMBDA)).std().iloc[-1]
     return sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
 sigma = calculate_sigma()
-    
-# N simulated GBM future prices
-def simulate_terminal_prices(S_0, T, sigma_):
-    W_T = np.sqrt(T) * Z
-    drift = (r - 0.5 * sigma_**2) * T
-    return S_0 * np.exp(drift + sigma_*W_T)
 
-def price_from_paths(S_T, T):
-    payoffs = np.maximum(S_T - K, 0.0)
-    discounted = np.exp(-r * T) * payoffs # risk-neutral valuation formula
-    price = discounted.mean() # estimate of option fair price
-    # se = discounted.std(ddof=1) / np.sqrt(N)
-    # ci_95 = (price - 1.96*se, price + 1.96*se)
-    return price
+def european_payoffs(paths):
+    S_T = paths[:, -1]
+    return np.maximum(S_T - K, 0.0)
 
-def mc_price(S_0, T, sigma_):
-    S_T = simulate_terminal_prices(S_0, T, sigma_)
-    price = price_from_paths(S_T, T)
-    return price
+def mc_price(price, T, sigma):
+    steps = 50
+    paths = simulate_paths(price, T, sigma, r, steps)
+    payoffs = european_payoffs(paths)
+    discounted = np.exp(-r * T) * payoffs
+    return discounted.mean()
 
-def delta_gamma(S_0, T, sigma_, h=None):
-    if h is None:
-        h = max(1e-4 * S_0, 0.01)   # relative 0.01% or at least 0.01 USD
-    p_plus  = mc_price(S_0 + h, T, sigma_)
-    p_minus = mc_price(S_0 - h, T, sigma_)
-    p0      = mc_price(S_0, T, sigma_) 
-    delta = (p_plus - p_minus) / (2 * h)
-    gamma = (p_plus - 2 * p0 + p_minus) / (h * h)
-    return delta, gamma
+rng = np.random.default_rng()
 
-def vega(S0, T, sigma_, h_sigma=None):
-    if h_sigma is None:
-        h_sigma = max(1e-4, 0.01 * sigma_)
-    p_plus  = mc_price(S0, T, sigma_ + h_sigma)
-    p_minus = mc_price(S0, T, sigma_ - h_sigma)
-    vega = (p_plus - p_minus) / (2 * h_sigma)
-    return vega
+def simulate_paths(S0, T, sigma, r, steps):      
+    dt = T / steps
+    sqrt_dt = np.sqrt(dt)
 
-def black_scholes(S_0, T, sigma):
-    if T <= 0:
-        return (max(S_0-K,0.0), 1.0 if S_0>K else 0.0, 0.0, 0.0)
-    d1 = (log(S_0/K) + (r + 0.5*sigma*sigma)*T) / (sigma*sqrt(T))
-    d2 = d1 - sigma*sqrt(T)
-    price = S_0 * norm.cdf(d1) - K*exp(-r*T)*norm.cdf(d2)
-    delta = norm.cdf(d1)
-    gamma = norm.pdf(d1) / (S_0 * sigma * sqrt(T))
-    vega = S_0 * norm.pdf(d1) * sqrt(T)    # per 1.0 vol unit
-    return price, delta, gamma, vega
+    # Generate random shocks (N paths × steps increments)
+    Z = rng.standard_normal(size=(N, steps))
 
-def main():
-    print(FINNHUB_API_KEY)
-    print_prices()
+    # Precompute drift/vol terms
+    drift = (r - 0.5 * sigma**2) * dt
+    vol = sigma * sqrt_dt
 
-def print_prices():
+    # Build log-increments
+    increments = drift + vol * Z       # shape (N, steps)
+
+    # Cumulative log-price
+    log_paths = np.cumsum(increments, axis=1)   # shape (N, steps)
+
+    # Allocate result array
+    paths = np.empty((N, steps+1))
+    paths[:, 0] = S0
+    paths[:, 1:] = S0 * np.exp(log_paths)
+
+    return paths
+
+def websocket_thread():
     def on_message(ws, message):
         msg = json.loads(message)
         if msg.get("type") == "trade" and "data" in msg:
             trades = msg["data"]
             if trades:
-                S_0 = trades[-1]["p"] # last available price
-                now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                T = time_to_maturity()
-
-                price = mc_price(S_0, T, sigma)
-                delta_, gamma_ = delta_gamma(S_0, T, sigma)
-                vega_ = vega(S_0, T, sigma)
-
-                bs_price, bs_delta, bs_gamma, bs_vega = black_scholes(S_0, T, sigma)
-
-                print(f"{now}: ${price:.2f} with Delta {delta_:.2f}, Gamma {gamma_:.8f}, Vega {vega_:.2f}")
-                print(price - bs_price, delta_ - bs_delta, gamma_ - bs_gamma, vega_ - bs_vega)
-                # l, r = ci_95
-                # print(f"{now}: ${price:.2f} +- ${1.96*se:.2f} (95% confidence interval: ${l:.2f}, ${r:.2f})")
+                price = trades[-1]["p"] # last available price
+                if price_queue.full():
+                    try:
+                        price_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                price_queue.put(price)        
 
     def on_open(ws):
         ws.send(json.dumps({"type": "subscribe", "symbol": FINNHUB_TICKER}))
@@ -129,7 +103,16 @@ def print_prices():
         except Exception as e:
             print("Error: ", e)
             sleep(5)
-            continue
+
+def pricing_thread():
+    while True:
+        price = price_queue.get()
+        T = time_to_maturity()
+        est_price = mc_price(price, T, sigma)
+        print(f"MC price = {est_price:.2f}")
 
 if __name__ == "__main__":
-    main()
+    threading.Thread(target=websocket_thread, daemon=True).start()
+    threading.Thread(target=pricing_thread, daemon=True).start()
+
+    threading.Event().wait() # block forever to keep daemons alive
