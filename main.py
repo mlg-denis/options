@@ -9,6 +9,7 @@ YF_TICKER = "BTC-USD"
 
 TRADING_DAYS_PER_YEAR = 252
 N = 2500000 # number of simulations
+batch_size = 50000
 r = 0.00414 # annualised drift (risk-free rate)
 K = 100000 # strike price (USD)
 expiry = datetime(2026,1,1, tzinfo=timezone.utc)
@@ -48,22 +49,60 @@ def mc_price(price, T, sigma):
     discounted = np.exp(-r * T) * payoffs
     return discounted.mean()
 
+def mc_price_batched(S0, T, sigma, payoff_fn, steps=50):
+    """
+    Computes Monte-Carlo price using batching.
+    Returns price estimate and standard error.
+    """
+
+    discount = np.exp(-r * T)
+
+    total_payoff = 0.0
+    total_sq = 0.0
+    total_N = 0
+
+    remaining = N
+
+    while remaining > 0:
+        batch = min(batch_size, remaining)
+
+        paths = simulate_paths(S0, T, sigma, r, steps, batch)
+        payoffs = payoff_fn(paths)
+
+        total_payoff += payoffs.sum()
+        total_sq += (payoffs ** 2).sum()
+        total_N += batch
+
+        # free memory for this batch
+        del paths, payoffs
+
+        remaining -= batch
+
+    # Monte Carlo estimates
+    mean_payoff = total_payoff / total_N
+    var_payoff = (total_sq / total_N) - mean_payoff**2
+    se = np.sqrt(var_payoff / total_N)
+
+    price = discount * mean_payoff
+    se_price = discount * se
+
+    return price, se_price
+
+
 rng = np.random.default_rng()
 
-def simulate_paths(S0, T, sigma, r, steps):      
+
+def simulate_paths(S0, T, sigma, r, steps, batch):      
     dt = T / steps
     sqrt_dt = np.sqrt(dt)
-
-    # Generate random shocks (N paths × steps increments)
-    half = (N+1) // 2
-    Z_half = rng.standard_normal((half, steps))
-    Z = np.vstack([Z_half, -Z_half])
-    Z = Z[:N]
-
-
     # Precompute drift/vol terms
     drift = (r - 0.5 * sigma**2) * dt
     vol = sigma * sqrt_dt
+    
+    # Generate random shocks (N paths × steps increments)
+    half = (batch + 1) // 2
+    Z_half = rng.standard_normal((half, steps))
+    Z = np.vstack([Z_half, -Z_half])[:batch, :]
 
     # Build log-increments
     increments = drift + vol * Z       # shape (N, steps)
@@ -72,7 +111,7 @@ def simulate_paths(S0, T, sigma, r, steps):
     log_paths = np.cumsum(increments, axis=1)   # shape (N, steps)
 
     # Allocate result array
-    paths = np.empty((N, steps+1))
+    paths = np.empty((batch, steps+1))
     paths[:, 0] = S0
     paths[:, 1:] = S0 * np.exp(log_paths)
 
@@ -112,8 +151,9 @@ def pricing_thread():
     while True:
         price = price_queue.get()
         T = time_to_maturity()
-        est_price = mc_price(price, T, sigma)
-        print(f"MC price = {est_price:.2f}")
+        est_price, est_se = mc_price_batched(price, T, sigma, european_payoffs)
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"{now}: MC price = {est_price:.2f}, MC SE = {est_se:.4f}")
 
 if __name__ == "__main__":
     threading.Thread(target=websocket_thread, daemon=True).start()
