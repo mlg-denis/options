@@ -9,18 +9,20 @@ YF_TICKER = "BTC-USD"
 
 TRADING_DAYS_PER_YEAR = 252
 N = 2500000 # number of simulations
-batch_size = 50000
-steps = 50
+BATCH_SIZE = 50000
+STEPS = 50
 r = 0.00414 # annualised drift (risk-free rate)
-K = 100000 # strike price (USD)
-expiry = datetime(2026,1,1, tzinfo=timezone.utc)
+K = 100000 # strike price
+EXPIRY = datetime(2026,1,1, tzinfo=timezone.utc)
 LAMBDA = 0.94 # how reactive is sigma
+
+OPTION_TYPE = "EUROPEAN CALL"
 
 price_queue = queue.Queue(maxsize=1)
 
 def time_to_maturity():
     now = datetime.now(timezone.utc)
-    days = (expiry-now).total_seconds() / 86400.0
+    days = (EXPIRY-now).total_seconds() / 86400.0
     return max(days, 0.0) / TRADING_DAYS_PER_YEAR
 
 def get_span(lambda_):
@@ -39,53 +41,61 @@ def calculate_sigma(): # annualised volatility
     return sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
 sigma = calculate_sigma()
 
-def european_payoffs(paths):
-    S_T = paths[:, -1]
-    return np.maximum(S_T - K, 0.0)
+def payoff_european_call(ST):
+    return np.maximum(ST - K, 0.0)
 
-def mc_price(price, T, sigma):
-    paths = simulate_paths(price, T, sigma, r)
-    payoffs = european_payoffs(paths)
-    discounted = np.exp(-r * T) * payoffs
-    return discounted.mean()
+def payoff_european_put(ST):
+    return np.maximum(K - ST, 0.0)
+
+def payoff_asian_call(paths):
+    avg_price = paths[:, 1:].mean(axis=1)
+    return np.maximum(avg_price - K, 0.0)
+
+def payoff_asian_put(paths):
+    avg_price = paths[:, 1:].mean(axis=1)
+    return np.maximum(K - avg_price, 0.0)
 
 rng = np.random.default_rng()
-
 half = (N+1) // 2
-Z_half = rng.standard_normal((half, steps))
-Z = np.vstack([Z_half, -Z_half])[:N]
-Z_batches = []
-start = 0
-while start < N:
-    end = min(start+batch_size, N)
-    Z_batches.append(Z[start:end])
-    start = end
 
-def mc_price_batched(S0, T, sigma, payoff_fn):
-    """
-    Computes Monte-Carlo price using batching.
-    Returns price estimate and standard error.
-    """
+# path-dependent Z with shape (N, STEPS)
+Z_half = rng.standard_normal((half, STEPS))
+Z = np.vstack([Z_half, -Z_half])[:N] # antithetic variate
+del Z_half
+Z_batches = [Z[i:i+BATCH_SIZE] for i in range(0,N, BATCH_SIZE)]
 
+# terminal-only Z with shape (N, )
+Zt_half = rng.standard_normal(half)
+Zt = np.concatenate([Zt_half, -Zt_half])[:N]
+del Zt_half
+Zt_batches = [Zt[i:i+BATCH_SIZE] for i in range(0,N, BATCH_SIZE)]
+
+def simulate_paths(S0, drift, vol, Z_batch):
+    increments = drift + vol * Z_batch
+    log_paths = np.cumsum(increments, axis=1)
+    # allocate result array
+    paths = np.empty((Z_batch.shape[0], STEPS+1))
+    paths[:, 0] = S0
+    paths[:, 1:] = S0 * np.exp(log_paths)
+    return paths
+
+def mc_path_dependent(S0, T, sigma, payoff_fn):
     discount = np.exp(-r * T)
-
     total_payoff = 0.0
     total_sq = 0.0
     total_N = 0
    
-    dt = T / steps
-    sqrt_dt = np.sqrt(dt)
-    # Precompute drift/vol terms
+    dt = T / STEPS
     drift = (r - 0.5 * sigma**2) * dt
-    vol = sigma * sqrt_dt
+    vol = sigma * np.sqrt(dt)
 
-    for Z_batch in Z_batches:
-        paths = simulate_paths(S0, drift, vol, Z_batch)
+    for Zb in Z_batches:
+        paths = simulate_paths(S0, drift, vol, Zb)
         payoffs = payoff_fn(paths)
 
         total_payoff += payoffs.sum()
         total_sq += (payoffs ** 2).sum()
-        total_N += Z_batch.shape[0]
+        total_N += Zb.shape[0]
 
         # free memory for this batch
         del paths, payoffs
@@ -97,24 +107,50 @@ def mc_price_batched(S0, T, sigma, payoff_fn):
 
     price = discount * mean_payoff
     se_price = discount * se
-
     return price, se_price
 
+def mc_terminal_only(S0, T, sigma, payoff_fn):
+    discount = np.exp(-r * T)
+    total_payoff = 0.0
+    total_sq = 0.0
+    total_N = 0
 
-def simulate_paths(S0, drift, vol, Z_batch):
+    drift = (r - 0.5 * sigma**2) * T
+    vol = sigma * np.sqrt(T)
 
-    # Build log-increments
-    increments = drift + vol * Z_batch
+    for Zb in Z_batches:
+        x = drift + vol * Zb
+        ST = S0 * np.exp(x)
+        payoffs = payoff_fn(ST)
 
-    # Cumulative log-price
-    log_paths = np.cumsum(increments, axis=1)
+        total_payoff += payoffs.sum()
+        total_sq += (payoffs ** 2).sum()
+        total_N += Zb.shape[0]
 
-    # Allocate result array
-    paths = np.empty((Z_batch.shape[0], steps+1))
-    paths[:, 0] = S0
-    paths[:, 1:] = S0 * np.exp(log_paths)
+        # free memory for this batch
+        del x, ST, payoffs
 
-    return paths
+    mean_payoff = total_payoff / total_N
+    var_payoff = max(0.0, (total_sq / total_N) - mean_payoff**2)
+    se = np.sqrt(var_payoff / total_N)
+
+    price = discount * mean_payoff
+    se_price = discount * se
+    return price, se_price
+
+def mc_option_price(S0, T, sigma, option_type):
+    match option_type.upper():
+        case "EUROPEAN CALL":
+            return mc_terminal_only(S0, T, sigma, payoff_european_call)
+        case "EUROPEAN PUT":
+            return mc_terminal_only(S0, T, sigma, payoff_european_put)
+        case "ASIAN CALL":
+            return mc_path_dependent(S0, T, sigma, payoff_asian_call)
+        case "ASIAN PUT":
+            return mc_path_dependent(S0, T, sigma, payoff_asian_put)
+        case _:
+            raise ValueError("Option type not recognised")     
+
 
 def websocket_thread():
     def on_message(ws, message):
@@ -148,9 +184,9 @@ def websocket_thread():
 
 def pricing_thread():
     while True:
-        price = price_queue.get()
+        S0 = price_queue.get()
         T = time_to_maturity()
-        est_price, est_se = mc_price_batched(price, T, sigma, european_payoffs)
+        est_price, est_se = mc_option_price(S0, T, sigma, OPTION_TYPE)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         print(f"{now}: MC price = {est_price:.2f}, MC SE = {est_se:.4f}")
 
