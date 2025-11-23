@@ -118,7 +118,7 @@ def mc_terminal_only(S0, T, sigma, payoff_fn):
     drift = (r - 0.5 * sigma**2) * T
     vol = sigma * np.sqrt(T)
 
-    for Zb in Z_batches:
+    for Zb in Zt_batches:
         x = drift + vol * Zb
         ST = S0 * np.exp(x)
         payoffs = payoff_fn(ST)
