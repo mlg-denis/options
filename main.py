@@ -10,6 +10,7 @@ YF_TICKER = "BTC-USD"
 TRADING_DAYS_PER_YEAR = 252
 N = 2500000 # number of simulations
 batch_size = 50000
+steps = 50
 r = 0.00414 # annualised drift (risk-free rate)
 K = 100000 # strike price (USD)
 expiry = datetime(2026,1,1, tzinfo=timezone.utc)
@@ -43,13 +44,24 @@ def european_payoffs(paths):
     return np.maximum(S_T - K, 0.0)
 
 def mc_price(price, T, sigma):
-    steps = 50
-    paths = simulate_paths(price, T, sigma, r, steps)
+    paths = simulate_paths(price, T, sigma, r)
     payoffs = european_payoffs(paths)
     discounted = np.exp(-r * T) * payoffs
     return discounted.mean()
 
-def mc_price_batched(S0, T, sigma, payoff_fn, steps=50):
+rng = np.random.default_rng()
+
+half = (N+1) // 2
+Z_half = rng.standard_normal((half, steps))
+Z = np.vstack([Z_half, -Z_half])[:N]
+Z_batches = []
+start = 0
+while start < N:
+    end = min(start+batch_size, N)
+    Z_batches.append(Z[start:end])
+    start = end
+
+def mc_price_batched(S0, T, sigma, payoff_fn):
     """
     Computes Monte-Carlo price using batching.
     Returns price estimate and standard error.
@@ -60,27 +72,27 @@ def mc_price_batched(S0, T, sigma, payoff_fn, steps=50):
     total_payoff = 0.0
     total_sq = 0.0
     total_N = 0
+   
+    dt = T / steps
+    sqrt_dt = np.sqrt(dt)
+    # Precompute drift/vol terms
+    drift = (r - 0.5 * sigma**2) * dt
+    vol = sigma * sqrt_dt
 
-    remaining = N
-
-    while remaining > 0:
-        batch = min(batch_size, remaining)
-
-        paths = simulate_paths(S0, T, sigma, r, steps, batch)
+    for Z_batch in Z_batches:
+        paths = simulate_paths(S0, drift, vol, Z_batch)
         payoffs = payoff_fn(paths)
 
         total_payoff += payoffs.sum()
         total_sq += (payoffs ** 2).sum()
-        total_N += batch
+        total_N += Z_batch.shape[0]
 
         # free memory for this batch
         del paths, payoffs
 
-        remaining -= batch
-
     # Monte Carlo estimates
     mean_payoff = total_payoff / total_N
-    var_payoff = (total_sq / total_N) - mean_payoff**2
+    var_payoff = max(0.0, (total_sq / total_N) - mean_payoff**2) # for floating point errors
     se = np.sqrt(var_payoff / total_N)
 
     price = discount * mean_payoff
@@ -89,29 +101,16 @@ def mc_price_batched(S0, T, sigma, payoff_fn, steps=50):
     return price, se_price
 
 
-rng = np.random.default_rng()
-
-
-def simulate_paths(S0, T, sigma, r, steps, batch):      
-    dt = T / steps
-    sqrt_dt = np.sqrt(dt)
-    # Precompute drift/vol terms
-    drift = (r - 0.5 * sigma**2) * dt
-    vol = sigma * sqrt_dt
-    
-    # Generate random shocks (N paths × steps increments)
-    half = (batch + 1) // 2
-    Z_half = rng.standard_normal((half, steps))
-    Z = np.vstack([Z_half, -Z_half])[:batch, :]
+def simulate_paths(S0, drift, vol, Z_batch):
 
     # Build log-increments
-    increments = drift + vol * Z       # shape (N, steps)
+    increments = drift + vol * Z_batch
 
     # Cumulative log-price
-    log_paths = np.cumsum(increments, axis=1)   # shape (N, steps)
+    log_paths = np.cumsum(increments, axis=1)
 
     # Allocate result array
-    paths = np.empty((batch, steps+1))
+    paths = np.empty((Z_batch.shape[0], steps+1))
     paths[:, 0] = S0
     paths[:, 1:] = S0 * np.exp(log_paths)
 
