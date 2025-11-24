@@ -90,6 +90,29 @@ def black_scholes(S0, T, sigma, option_type):
     else:
         raise ValueError("Option type must be EUROPEAN CALL or EUROPEAN PUT to use Black-Scholes closed form.")
 
+def black_scholes_greeks(S0, T, sigma, option_type):
+    sqrtT = math.sqrt(T)
+    d1 = (math.log(S0 / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT)
+    d2 = d1 - sigma * sqrtT
+
+    Nd1, Nd2 = norm_cdf(d1), norm_cdf(d2)
+
+    delta_c = Nd1
+    gamma = math.exp(-0.5 * d1 * d1) / (S0 * sigma * sqrtT * math.sqrt(2 * math.pi))
+    vega = S0 * math.exp(-0.5 * d1 * d1) * sqrtT / math.sqrt(2 * math.pi)
+    theta_c = -(S0 * sigma * math.exp(-0.5 * d1 * d1)) / (2 * sqrtT * math.sqrt(2 * math.pi)) - r * K * math.exp(-r * T) * Nd2
+    rho_c = K * T * math.exp(-r * T) * Nd2
+
+    if option_type == "EUROPEAN CALL":
+        return (delta_c, gamma, vega, theta_c, rho_c)
+    elif option_type == "EUROPEAN PUT":
+        delta_p = delta_c - 1
+        theta_p = theta_c + r * K * math.exp(-r * T)
+        rho_p = rho_c - T * K * math.exp(-r * T)
+        return (delta_p, gamma, vega, theta_p, rho_p)
+    else:
+        raise ValueError("Option type must be EUROPEAN CALL or EUROPEAN PUT to use Black-Scholes closed form.")
+
 def geometric_asian_price(S0, T, sigma, option_type):
     sigma_ = sigma * math.sqrt((2*STEPS + 1) / (6*(STEPS + 1)))
     mu_ = 0.5 * (r - 0.5*sigma*sigma) + 0.5*sigma_*sigma_
@@ -108,7 +131,6 @@ def geometric_asian_price(S0, T, sigma, option_type):
         return K * discount * (1-Nd2) - S0 * math.exp(mu_*T) * (1-Nd1)
     else:
         raise ValueError("Option type must be ASIAN CALL or ASIAN PUT to use geometric Asian control variate")        
-
 
 def mc_path_dependent(S0, T, sigma, payoff_X, payoff_Y = None, E_Y = None):
     discount = np.exp(-r * T)
@@ -168,7 +190,7 @@ def mc_path_dependent(S0, T, sigma, payoff_X, payoff_Y = None, E_Y = None):
     se_price = discount * se
     return price, se_price
 
-def mc_terminal_only(S0, T, sigma, payoff_fn):
+def mc_terminal_only(S0, T, sigma, payoff_X):
     discount = np.exp(-r * T)
     total_payoff = 0.0
     total_sq = 0.0
@@ -187,7 +209,7 @@ def mc_terminal_only(S0, T, sigma, payoff_fn):
 
         x = drift + vol * Zb
         ST = S0 * np.exp(x)
-        payoffs = payoff_fn(ST)
+        payoffs = payoff_X(ST)
 
         total_payoff += payoffs.sum()
         total_sq += (payoffs ** 2).sum()
@@ -205,9 +227,13 @@ def mc_option_price(S0, T, sigma, option_type):
     o = option_type.upper()
     match o:
         case "EUROPEAN CALL":
-            return black_scholes(S0, T, sigma, "EUROPEAN CALL"), 0.0
+            price, se = black_scholes(S0, T, sigma, "EUROPEAN CALL"), 0.0
+            greeks = black_scholes_greeks(S0, T, sigma, "EUROPEAN CALL")
+            return price, se, greeks
         case "EUROPEAN PUT":
-            return black_scholes(S0, T, sigma, "EUROPEAN PUT"), 0.0
+            price, se = black_scholes(S0, T, sigma, "EUROPEAN PUT"), 0.0
+            greeks = black_scholes_greeks(S0, T, sigma, "EUROPEAN PUT")
+            return price, se, greeks
         case "ASIAN CALL":
             E_Y = geometric_asian_price(S0, T, sigma, o)
             return mc_path_dependent(S0, T, sigma, payoff_asian_call, payoff_asian_call_geometric, E_Y)
