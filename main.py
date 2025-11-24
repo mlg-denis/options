@@ -8,7 +8,7 @@ FINNHUB_TICKER = "BINANCE:BTCUSDT"
 YF_TICKER = "BTC-USD"
 
 TRADING_DAYS_PER_YEAR = 365 # this is the case for BTC. change for instruments on NYSE for example, using pandas_market_calendars
-N = 2500000 # number of simulations
+N = 50000 # number of simulations
 BATCH_SIZE = 50000
 STEPS = 50
 r = 0.00414 # annualised drift (risk-free rate)
@@ -57,7 +57,7 @@ def payoff_asian_put(paths):
     avg_price = paths[:, 1:].mean(axis=1)
     return np.maximum(K - avg_price, 0.0)
 
-def payoff_asian_call_geometric(paths):
+def payoff_asian_put_geometric(paths):
     # using the exp(log(_)) trick guards against underflow/overflow
     log_avg_price = np.log(paths[:,1:]).mean(axis=1)
     return np.maximum(K - np.exp(log_avg_price), 0.0)
@@ -110,15 +110,34 @@ def geometric_asian_price(S0, T, sigma, option_type):
         raise ValueError("Option type must be ASIAN CALL or ASIAN PUT to use geometric Asian control variate")        
 
 
-def mc_path_dependent(S0, T, sigma, payoff_fn):
+def mc_path_dependent(S0, T, sigma, payoff_X, payoff_Y = None, E_Y = None):
     discount = np.exp(-r * T)
-    total_payoff = 0.0
+    total = 0.0
     total_sq = 0.0
     total_N = 0
    
     dt = T / STEPS
     drift = (r - 0.5 * sigma**2) * dt
     vol = sigma * np.sqrt(dt)
+
+    use_cv = payoff_Y is not None and E_Y is not None # cv - control variate
+
+    if use_cv:
+        # run a smaller MC to estimate control variate correlation coefficient
+        m = max(5000, BATCH_SIZE // 2)
+        half = (m+1)//2
+        Z_half = rng.standard_normal((half, STEPS))
+        Z = np.vstack((Z_half, -Z_half))[:m]
+        paths = simulate_paths(S0, drift, vol, Z) # Z is small enough to reasonably calculate all its paths in one go
+
+        X = payoff_X(paths)
+        Y = payoff_Y(paths)
+        var_Y = np.var(Y, ddof=1)
+        
+        beta = np.cov(X, Y, ddof=1)[0,1] / var_Y
+    else:
+        beta = 0.0    
+
 
     while total_N < N:
         m = min(BATCH_SIZE, N-total_N)
@@ -129,17 +148,23 @@ def mc_path_dependent(S0, T, sigma, payoff_fn):
         Zb = np.vstack((Z_half, -Z_half))[:m]
 
         paths = simulate_paths(S0, drift, vol, Zb)
-        payoffs = payoff_fn(paths)
+        X = payoff_X(paths)
 
-        total_payoff += payoffs.sum()
-        total_sq += (payoffs ** 2).sum()
+        if use_cv:
+            Y = payoff_Y(paths)
+            adjusted = X - beta*(Y - E_Y)
+        else:
+            adjusted = X    
+
+        total += adjusted.sum()
+        total_sq += (adjusted*adjusted).sum()
         total_N += m
 
-    mean_payoff = total_payoff / total_N
-    var_payoff = max(0.0, (total_sq / total_N) - mean_payoff**2) # to clamp floating point errors
-    se = np.sqrt(var_payoff / total_N)
+    mean = total / total_N
+    var = max(0.0, (total_sq / total_N) - mean**2) # to clamp floating point errors
+    se = np.sqrt(var / total_N)
 
-    price = discount * mean_payoff
+    price = discount * mean
     se_price = discount * se
     return price, se_price
 
@@ -184,9 +209,11 @@ def mc_option_price(S0, T, sigma, option_type):
         case "EUROPEAN PUT":
             return black_scholes(S0, T, sigma, "EUROPEAN PUT"), 0.0
         case "ASIAN CALL":
-            return mc_path_dependent(S0, T, sigma, payoff_asian_call)
+            E_Y = geometric_asian_price(S0, T, sigma, o)
+            return mc_path_dependent(S0, T, sigma, payoff_asian_call, payoff_asian_call_geometric, E_Y)
         case "ASIAN PUT":
-            return mc_path_dependent(S0, T, sigma, payoff_asian_put)
+            E_Y = geometric_asian_price(S0, T, sigma, o)
+            return mc_path_dependent(S0, T, sigma, payoff_asian_put, payoff_asian_put_geometric, E_Y)
         case _:
             raise ValueError("Option type not recognised")     
 
