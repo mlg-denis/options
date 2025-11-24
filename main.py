@@ -48,9 +48,19 @@ def payoff_asian_call(paths):
     avg_price = paths[:, 1:].mean(axis=1)
     return np.maximum(avg_price - K, 0.0)
 
+def payoff_asian_call_geometric(paths):
+    # using the exp(log(_)) trick guards against underflow/overflow
+    log_avg_price = np.log(paths[:,1:]).mean(axis=1)
+    return np.maximum(np.exp(log_avg_price) - K, 0.0)
+
 def payoff_asian_put(paths):
     avg_price = paths[:, 1:].mean(axis=1)
     return np.maximum(K - avg_price, 0.0)
+
+def payoff_asian_call_geometric(paths):
+    # using the exp(log(_)) trick guards against underflow/overflow
+    log_avg_price = np.log(paths[:,1:]).mean(axis=1)
+    return np.maximum(K - np.exp(log_avg_price), 0.0)
 
 rng = np.random.default_rng(seed=0)
 
@@ -63,13 +73,14 @@ def simulate_paths(S0, drift, vol, Z_batch):
     paths[:, 1:] = S0 * np.exp(log_paths)
     return paths
 
+def norm_cdf(x):
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
 def black_scholes(S0, T, sigma, option_type):
     sqrtT = math.sqrt(T)
     d1 = (math.log(S0 / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT)
     d2 = d1 - sigma * sqrtT
 
-    def norm_cdf(x):
-        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
     Nd1, Nd2 = norm_cdf(d1), norm_cdf(d2)
 
     if option_type == "EUROPEAN CALL":
@@ -78,6 +89,26 @@ def black_scholes(S0, T, sigma, option_type):
         return K * math.exp(-r * T) * (1 - Nd2) - S0 * (1 - Nd1)
     else:
         raise ValueError("Option type must be EUROPEAN CALL or EUROPEAN PUT to use Black-Scholes closed form.")
+
+def geometric_asian_price(S0, T, sigma, option_type):
+    sigma_ = sigma * math.sqrt((2*STEPS + 1) / (6*(STEPS + 1)))
+    mu_ = 0.5 * (r - 0.5*sigma*sigma) + 0.5*sigma_*sigma_
+
+    sqrtT = math.sqrt(T)
+    d1 = (math.log(S0 / K) + (mu_ + 0.5*sigma_*sigma_) * T) / (sigma_ * sqrtT)
+    d2 = d1 - sigma_ * sqrtT
+
+    Nd1, Nd2 = norm_cdf(d1), norm_cdf(d2)
+
+    discount = math.exp(-r * T)
+
+    if option_type == "ASIAN CALL":
+        return S0 * math.exp(mu_*T) * Nd1 - K * discount * Nd2
+    elif option_type == "ASIAN PUT":
+        return K * discount * (1-Nd2) - S0 * math.exp(mu_*T) * (1-Nd1)
+    else:
+        raise ValueError("Option type must be ASIAN CALL or ASIAN PUT to use geometric Asian control variate")        
+
 
 def mc_path_dependent(S0, T, sigma, payoff_fn):
     discount = np.exp(-r * T)
