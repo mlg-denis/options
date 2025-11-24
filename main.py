@@ -1,4 +1,4 @@
-import numpy as np, pandas as pd, yfinance as yf, websocket, json, threading, queue
+import numpy as np, pandas as pd, yfinance as yf, websocket, json, threading, queue, math
 from os import getenv
 from time import sleep
 from datetime import datetime, timezone
@@ -14,7 +14,6 @@ STEPS = 50
 r = 0.00414 # annualised drift (risk-free rate)
 K = 100000 # strike price
 EXPIRY = datetime(2026,1,1, tzinfo=timezone.utc)
-LAMBDA = 0.94 # how reactive is sigma
 
 OPTION_TYPE = "ASIAN CALL"
 
@@ -26,7 +25,8 @@ def time_to_maturity():
     return seconds / (TRADING_DAYS_PER_YEAR * 24 * 3600)
 
 def calculate_sigma(): # annualised volatility
-    data = yf.download(YF_TICKER, period="1y")
+    data = yf.download(YF_TICKER, period="1y", progress=False)
+    LAMBDA = 0.94 # how reactive is sigma
     
     if isinstance(data.columns, pd.MultiIndex):
         close = data[("Close", YF_TICKER)]
@@ -62,6 +62,22 @@ def simulate_paths(S0, drift, vol, Z_batch):
     paths[:, 0] = S0
     paths[:, 1:] = S0 * np.exp(log_paths)
     return paths
+
+def black_scholes(S0, T, sigma, option_type):
+    sqrtT = math.sqrt(T)
+    d1 = (math.log(S0 / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT)
+    d2 = d1 - sigma * sqrtT
+
+    def norm_cdf(x):
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+    Nd1, Nd2 = norm_cdf(d1), norm_cdf(d2)
+
+    if option_type == "EUROPEAN CALL":
+        return S0 * Nd1 - K * math.exp(-r * T) * Nd2
+    elif option_type == "EUROPEAN PUT":
+        return K * math.exp(-r * T) * (1 - Nd2) - S0 * (1 - Nd1)
+    else:
+        raise ValueError("Option type must be EUROPEAN CALL or EUROPEAN PUT to use Black-Scholes closed form.")
 
 def mc_path_dependent(S0, T, sigma, payoff_fn):
     discount = np.exp(-r * T)
@@ -130,7 +146,8 @@ def mc_terminal_only(S0, T, sigma, payoff_fn):
     return price, se_price
 
 def mc_option_price(S0, T, sigma, option_type):
-    match option_type.upper():
+    o = option_type.upper()
+    match o:
         case "EUROPEAN CALL":
             return mc_terminal_only(S0, T, sigma, payoff_european_call)
         case "EUROPEAN PUT":
@@ -142,20 +159,19 @@ def mc_option_price(S0, T, sigma, option_type):
         case _:
             raise ValueError("Option type not recognised")     
 
-
 def websocket_thread():
     def on_message(ws, message):
         msg = json.loads(message)
         if msg.get("type") == "trade" and "data" in msg:
             trades = msg["data"]
             if trades:
-                price = trades[-1]["p"] # last available price
+                S0 = trades[-1]["p"] # last available price
                 if price_queue.full():
                     try:
                         price_queue.get_nowait()
                     except queue.Empty:
                         pass
-                price_queue.put(price)        
+                price_queue.put(S0)        
 
     def on_open(ws):
         ws.send(json.dumps({"type": "subscribe", "symbol": FINNHUB_TICKER}))
@@ -186,7 +202,7 @@ def pricing_thread():
         if (now - last_sigma_update).total_seconds() >= UPDATE_INTERVAL_SECONDS:
             try:
                 sigma = calculate_sigma()
-                print(f"{now}: [Sigma updated to {sigma:.4f}]")
+                print(f"{now.strftime("%Y-%m-%d %H-%M-%S")}: [Sigma updated to {sigma:.4f}]")
                 last_sigma_update = now
             except Exception as e: # if yfinance doesn't work as expected
                 print(f"{now} [Sigma update failed]")       
