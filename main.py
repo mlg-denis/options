@@ -8,12 +8,12 @@ FINNHUB_TICKER = "BINANCE:BTCUSDT"
 YF_TICKER = "BTC-USD"
 
 TRADING_DAYS_PER_YEAR = 365 # this is the case for BTC. change for instruments on NYSE for example, using pandas_market_calendars
-N = 50000 # number of simulations
+N = 250000 # number of simulations
 BATCH_SIZE = 50000
 STEPS = 50
 r = 0.00414 # annualised drift (risk-free rate)
-K = 100000 # strike price
-EXPIRY = datetime(2026,1,1, tzinfo=timezone.utc)
+K = 90000 # strike price
+EXPIRY = datetime(2025,12,24, tzinfo=timezone.utc)
 
 OPTION_TYPE = "EUROPEAN CALL"
 
@@ -25,7 +25,7 @@ def time_to_maturity():
     return seconds / (TRADING_DAYS_PER_YEAR * 24 * 3600)
 
 def calculate_sigma(): # annualised volatility
-    data = yf.download(YF_TICKER, period="1y", progress=False)
+    data = yf.download(YF_TICKER, period="1y", progress=False, auto_adjust=True)
     LAMBDA = 0.94 # how reactive is sigma
     
     if isinstance(data.columns, pd.MultiIndex):
@@ -227,19 +227,21 @@ def mc_option_price(S0, T, sigma, option_type):
     o = option_type.upper()
     match o:
         case "EUROPEAN CALL":
-            price, se = black_scholes(S0, T, sigma, "EUROPEAN CALL"), 0.0
+            price = black_scholes(S0, T, sigma, "EUROPEAN CALL")
             greeks = black_scholes_greeks(S0, T, sigma, "EUROPEAN CALL")
-            return price, se, greeks
+            return price, None, greeks # deterministic price, no SE
         case "EUROPEAN PUT":
-            price, se = black_scholes(S0, T, sigma, "EUROPEAN PUT"), 0.0
+            price = black_scholes(S0, T, sigma, "EUROPEAN PUT")
             greeks = black_scholes_greeks(S0, T, sigma, "EUROPEAN PUT")
-            return price, se, greeks
+            return price, None, greeks
         case "ASIAN CALL":
             E_Y = geometric_asian_price(S0, T, sigma, o)
-            return mc_path_dependent(S0, T, sigma, payoff_asian_call, payoff_asian_call_geometric, E_Y)
+            price, se = mc_path_dependent(S0, T, sigma, payoff_asian_call, payoff_asian_call_geometric, E_Y)
+            return price, se, None
         case "ASIAN PUT":
             E_Y = geometric_asian_price(S0, T, sigma, o)
-            return mc_path_dependent(S0, T, sigma, payoff_asian_put, payoff_asian_put_geometric, E_Y)
+            price, se = mc_path_dependent(S0, T, sigma, payoff_asian_put, payoff_asian_put_geometric, E_Y)
+            return price, se, None
         case _:
             raise ValueError("Option type not recognised")     
 
@@ -293,10 +295,16 @@ def pricing_thread():
 
         T = time_to_maturity()
         est_price, est_se, greeks = mc_option_price(S0, T, sigma, OPTION_TYPE)
-        (d, g, v, t, r) = greeks
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        print(f"{now}: MC price = {est_price:.2f}, MC SE = {est_se:.4f}")
-        print(f"Delta = {d:.4f}, Gamma = {g:.2e}, Vega = {v/100:.2f} per 1% vol, Theta = {t/365:.2f} per day, Rho = {r/100:.2f} per 1% rate")
+        
+        if est_se is None:
+            print(f"{now}: Price = {est_price:.2f} (deterministic)")
+        else:
+            print(f"{now}: MC price = {est_price:.2f}, MC SE = {est_se:.4f}")
+            
+        if greeks is not None:
+            (d, g, v, t, r) = greeks
+            print(f"Δ = {d:.4f}, Γ = {g:.2e}, V = {v/100:.2f} per 1% vol, Θ = {t/365:.2f} per day, ρ = {r/100:.2f} per 1% rate")
 
 if __name__ == "__main__":
     threading.Thread(target=websocket_thread, daemon=True).start()
