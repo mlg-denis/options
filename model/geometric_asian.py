@@ -1,5 +1,4 @@
-from math import sqrt, log, exp
-from scipy.stats import norm
+from math import sqrt, log, exp, erf
 from config import r, STEPS, K
 
 def geometric_asian_price(S0, T, sigma, option_type):
@@ -10,7 +9,10 @@ def geometric_asian_price(S0, T, sigma, option_type):
     d1 = (log(S0 / K) + (mu_ + 0.5*sigma_*sigma_) * T) / (sigma_ * sqrtT)
     d2 = d1 - sigma_ * sqrtT
 
-    Nd1, Nd2 = norm(d1), norm(d2)
+    def norm_cdf(x):
+        return 0.5 * (1.0 + erf(x / sqrt(2.0)))
+
+    Nd1, Nd2 = norm_cdf(d1), norm_cdf(d2)
 
     discount = exp(-r * T)
 

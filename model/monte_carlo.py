@@ -1,4 +1,4 @@
-from numpy import exp, sqrt, var, cov, vstack, concatenate, random, cumsum, empty
+import numpy as np
 from config import STEPS, r, N, BATCH_SIZE
 from model.black_scholes import black_scholes, black_scholes_greeks
 from model.geometric_asian import geometric_asian_price
@@ -6,39 +6,39 @@ from model.payoffs import payoff_asian_call, payoff_asian_call_geometric, payoff
 
 def simulate_paths(S0, drift, vol, Z_batch):
     increments = drift + vol * Z_batch
-    log_paths = cumsum(increments, axis=1)
+    log_paths = np.cumsum(increments, axis=1)
     # allocate result array
-    paths = empty((Z_batch.shape[0], STEPS+1))
+    paths = np.empty((Z_batch.shape[0], STEPS+1))
     paths[:, 0] = S0
-    paths[:, 1:] = S0 * exp(log_paths)
+    paths[:, 1:] = S0 * np.exp(log_paths)
     return paths
 
 def mc_path_dependent(S0, T, sigma, payoff_X, payoff_Y = None, E_Y = None):
-    discount = exp(-r * T)
+    discount = np.exp(-r * T)
     total = 0.0
     total_sq = 0.0
     total_N = 0
    
     dt = T / STEPS
     drift = (r - 0.5 * sigma**2) * dt
-    vol = sigma * sqrt(dt)
+    vol = sigma * np.sqrt(dt)
 
     use_cv = payoff_Y is not None and E_Y is not None # cv - control variate
 
-    rng = random.default_rng()
+    rng = np.random.default_rng()
     if use_cv:
         # run a smaller MC to estimate control variate correlation coefficient
         m = max(5000, BATCH_SIZE // 2)
         half = (m+1)//2
         Z_half = rng.standard_normal((half, STEPS))
-        Z = vstack((Z_half, -Z_half))[:m]
+        Z = np.vstack((Z_half, -Z_half))[:m]
         paths = simulate_paths(S0, drift, vol, Z) # Z is small enough to reasonably calculate all its paths in one go
 
         X = payoff_X(paths)
         Y = payoff_Y(paths)
-        var_Y = var(Y, ddof=1)
+        var_Y = np.var(Y, ddof=1)
         
-        beta = cov(X, Y, ddof=1)[0,1] / var_Y
+        beta = np.cov(X, Y, ddof=1)[0,1] / var_Y
     else:
         beta = 0.0    
 
@@ -49,7 +49,7 @@ def mc_path_dependent(S0, T, sigma, payoff_X, payoff_Y = None, E_Y = None):
         # antithetic variates
         half = (m+1) // 2
         Z_half = rng.standard_normal((half, STEPS))
-        Zb = vstack((Z_half, -Z_half))[:m]
+        Zb = np.vstack((Z_half, -Z_half))[:m]
 
         paths = simulate_paths(S0, drift, vol, Zb)
         X = payoff_X(paths)
@@ -66,31 +66,31 @@ def mc_path_dependent(S0, T, sigma, payoff_X, payoff_Y = None, E_Y = None):
 
     mean = total / total_N
     var = max(0.0, (total_sq / total_N) - mean**2) # to clamp floating point errors
-    se = sqrt(var / total_N)
+    se = np.sqrt(var / total_N)
 
     price = discount * mean
     se_price = discount * se
     return price, se_price
 
 def mc_terminal_only(S0, T, sigma, payoff_X):
-    discount = exp(-r * T)
+    discount = np.exp(-r * T)
     total_payoff = 0.0
     total_sq = 0.0
     total_N = 0
 
     drift = (r - 0.5 * sigma**2) * T
-    vol = sigma * sqrt(T)
+    vol = sigma * np.sqrt(T)
 
     while total_N < N:
         m = min(BATCH_SIZE, N-total_N)
         # antithetic variates
         half = (m+1) // 2
-        rng = random.default_rng()
+        rng = np.random.default_rng()
         Z_half = rng.standard_normal(half)
-        Zb = concatenate([Z_half, -Z_half])[:m]
+        Zb = np.concatenate([Z_half, -Z_half])[:m]
 
         x = drift + vol * Zb
-        ST = S0 * exp(x)
+        ST = S0 * np.exp(x)
         payoffs = payoff_X(ST)
 
         total_payoff += payoffs.sum()
@@ -99,7 +99,7 @@ def mc_terminal_only(S0, T, sigma, payoff_X):
 
     mean_payoff = total_payoff / total_N
     var_payoff = max(0.0, (total_sq / total_N) - mean_payoff**2)
-    se = sqrt(var_payoff / total_N)
+    se = np.sqrt(var_payoff / total_N)
 
     price = discount * mean_payoff
     se_price = discount * se
