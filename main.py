@@ -16,7 +16,7 @@ K = 100000 # strike price
 EXPIRY = datetime(2026,1,1, tzinfo=timezone.utc)
 LAMBDA = 0.94 # how reactive is sigma
 
-OPTION_TYPE = "EUROPEAN CALL"
+OPTION_TYPE = "ASIAN CALL"
 
 price_queue = queue.Queue(maxsize=1)
 
@@ -37,7 +37,6 @@ def calculate_sigma(): # annualised volatility
     logr = np.log(close / close.shift(1)).dropna() # r_t = ln P_t/P_{t-1}
     sigma_daily = logr.ewm(span=span).std().iloc[-1]
     return sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
-sigma = calculate_sigma()
 
 def payoff_european_call(ST):
     return np.maximum(ST - K, 0.0)
@@ -175,8 +174,23 @@ def websocket_thread():
             sleep(5)
 
 def pricing_thread():
+    sigma = calculate_sigma()
+    last_sigma_update = datetime.now(timezone.utc)
+    UPDATE_INTERVAL_SECONDS = 60
+
     while True:
         S0 = price_queue.get()
+
+        # update volatility periodically
+        now = datetime.now(timezone.utc)
+        if (now - last_sigma_update).total_seconds() >= UPDATE_INTERVAL_SECONDS:
+            try:
+                sigma = calculate_sigma()
+                print(f"{now}: [Sigma updated to {sigma:.4f}]")
+                last_sigma_update = now
+            except Exception as e: # if yfinance doesn't work as expected
+                print(f"{now} [Sigma update failed]")       
+
         T = time_to_maturity()
         est_price, est_se = mc_option_price(S0, T, sigma, OPTION_TYPE)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
