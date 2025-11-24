@@ -22,11 +22,8 @@ price_queue = queue.Queue(maxsize=1)
 
 def time_to_maturity():
     now = datetime.now(timezone.utc)
-    days = (EXPIRY-now).total_seconds() / 86400.0
-    return max(days, 0.0) / TRADING_DAYS_PER_YEAR
-
-def get_span(lambda_):
-    return 2 / (1 - lambda_) - 1
+    expiry = EXPIRY.date
+    return max(np.busday_count(now, expiry) / TRADING_DAYS_PER_YEAR, 0.0)
 
 def calculate_sigma(): # annualised volatility
     data = yf.download(YF_TICKER, period="1y")
@@ -36,8 +33,9 @@ def calculate_sigma(): # annualised volatility
     else:
         close = data["Close"]
 
+    span = 2 / (1 - LAMBDA) - 1
     logr = np.log(close / close.shift(1)).dropna() # r_t = ln P_t/P_{t-1}
-    sigma_daily = logr.ewm(span=get_span(LAMBDA)).std().iloc[-1]
+    sigma_daily = logr.ewm(span=span).std().iloc[-1]
     return sigma_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
 sigma = calculate_sigma()
 
@@ -55,7 +53,7 @@ def payoff_asian_put(paths):
     avg_price = paths[:, 1:].mean(axis=1)
     return np.maximum(K - avg_price, 0.0)
 
-rng = np.random.default_rng()
+rng = np.random.default_rng(seed=0)
 half = (N+1) // 2
 
 # path-dependent Z with shape (N, STEPS)
