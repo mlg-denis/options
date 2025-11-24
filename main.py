@@ -74,9 +74,7 @@ def mc_path_dependent(S0, T, sigma, payoff_fn):
     drift = (r - 0.5 * sigma**2) * dt
     vol = sigma * np.sqrt(dt)
 
-    batch_count = (N + BATCH_SIZE - 1) // BATCH_SIZE # ceiling
-
-    for _ in range(batch_count):
+    while total_N < N:
         m = min(BATCH_SIZE, N-total_N)
 
         # antithetic variates
@@ -108,9 +106,7 @@ def mc_terminal_only(S0, T, sigma, payoff_fn):
     drift = (r - 0.5 * sigma**2) * T
     vol = sigma * np.sqrt(T)
 
-    batch_count = (N + BATCH_SIZE - 1) // BATCH_SIZE
-
-    for _ in range(batch_count):
+    while total_N < N:
         m = min(BATCH_SIZE, N-total_N)
 
         # antithetic variates
