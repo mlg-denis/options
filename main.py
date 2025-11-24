@@ -15,7 +15,7 @@ r = 0.00414 # annualised drift (risk-free rate)
 K = 100000 # strike price
 EXPIRY = datetime(2026,1,1, tzinfo=timezone.utc)
 
-OPTION_TYPE = "ASIAN CALL"
+OPTION_TYPE = "EUROPEAN CALL"
 
 price_queue = queue.Queue(maxsize=1)
 
@@ -292,9 +292,11 @@ def pricing_thread():
                 print(f"{now} [Sigma update failed]")       
 
         T = time_to_maturity()
-        est_price, est_se = mc_option_price(S0, T, sigma, OPTION_TYPE)
+        est_price, est_se, greeks = mc_option_price(S0, T, sigma, OPTION_TYPE)
+        (d, g, v, t, r) = greeks
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         print(f"{now}: MC price = {est_price:.2f}, MC SE = {est_se:.4f}")
+        print(f"Delta = {d:.4f}, Gamma = {g:.2e}, Vega = {v/100:.2f} per 1% vol, Theta = {t/365:.2f} per day, Rho = {r/100:.2f} per 1% rate")
 
 if __name__ == "__main__":
     threading.Thread(target=websocket_thread, daemon=True).start()
