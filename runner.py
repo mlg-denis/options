@@ -39,7 +39,7 @@ def pricing_thread(price_queue: Queue):
 
         if greeks is not None:
             d, g, v, t, r = greeks
-            print(f"Δ = {d:.4f}  Γ = {g:.2e}  V = {v/100:.2f}/1%  Θ = {t/365:.2f}/day  ρ ={r/100:.2f}/1%")
+            print(format_greeks(d, g, v, t, r))
 
 
 def main():

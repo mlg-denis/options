@@ -19,8 +19,9 @@ def rho_to_percent(rho):
     return rho * 0.01
 
 def format_greeks(delta, gamma, vega, theta, rho):
+    theta = abs(theta_per_day(theta))
     return (f"Δ = {delta:.4f}  "
             f"Γ = {gamma:.2e}  "
-            f"V = {vega_to_percent(vega):.2f}/1%  "
-            f"Θ = {theta_per_day(theta):.2f}/day  "
-            f"ρ = {rho_to_percent(rho):.2f}/1%")
+            f"V = ${vega_to_percent(vega):.2f}/1%  "
+            f"Θ = -${theta:.2f}/day  "
+            f"ρ = ${rho_to_percent(rho):.2f}/1%")
