@@ -298,13 +298,13 @@ def pricing_thread():
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         
         if est_se is None:
-            print(f"{now}: Price = {est_price:.2f} (deterministic)")
+            print(f"{now}: Price = ${est_price:.2f} (deterministic)")
         else:
-            print(f"{now}: MC price = {est_price:.2f}, MC SE = {est_se:.4f}")
+            print(f"{now}: MC price = ${est_price:.2f}, MC SE = {est_se:.4f}")
             
         if greeks is not None:
             (d, g, v, t, r) = greeks
-            print(f"Δ = {d:.4f}, Γ = {g:.2e}, V = {v/100:.2f} per 1% vol, Θ = {t/365:.2f} per day, ρ = {r/100:.2f} per 1% rate")
+            print(f"Δ = {d:.4f}, Γ = {g:.2e}, V = ${v/100:.2f} per 1% vol, Θ = {f"-${abs(t/365):.2f}"} per day, ρ = ${r/100:.2f} per 1% rate")
 
 if __name__ == "__main__":
     threading.Thread(target=websocket_thread, daemon=True).start()
