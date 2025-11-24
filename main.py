@@ -149,9 +149,9 @@ def mc_option_price(S0, T, sigma, option_type):
     o = option_type.upper()
     match o:
         case "EUROPEAN CALL":
-            return mc_terminal_only(S0, T, sigma, payoff_european_call)
+            return black_scholes(S0, T, sigma, "EUROPEAN CALL"), 0.0
         case "EUROPEAN PUT":
-            return mc_terminal_only(S0, T, sigma, payoff_european_put)
+            return black_scholes(S0, T, sigma, "EUROPEAN PUT"), 0.0
         case "ASIAN CALL":
             return mc_path_dependent(S0, T, sigma, payoff_asian_call)
         case "ASIAN PUT":
