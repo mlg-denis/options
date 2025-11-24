@@ -7,7 +7,7 @@ FINNHUB_API_KEY = getenv("FINNHUB_API_KEY")
 FINNHUB_TICKER = "BINANCE:BTCUSDT"
 YF_TICKER = "BTC-USD"
 
-TRADING_DAYS_PER_YEAR = 252
+TRADING_DAYS_PER_YEAR = 365 # this is the case for BTC. change for instruments on NYSE for example, using pandas_market_calendars
 N = 2500000 # number of simulations
 BATCH_SIZE = 50000
 STEPS = 50
@@ -22,8 +22,8 @@ price_queue = queue.Queue(maxsize=1)
 
 def time_to_maturity():
     now = datetime.now(timezone.utc)
-    expiry = EXPIRY.date
-    return max(np.busday_count(now, expiry) / TRADING_DAYS_PER_YEAR, 0.0)
+    seconds = max((EXPIRY - now).total_seconds(), 0.0)
+    return seconds / (TRADING_DAYS_PER_YEAR * 24 * 3600)
 
 def calculate_sigma(): # annualised volatility
     data = yf.download(YF_TICKER, period="1y")
@@ -54,19 +54,6 @@ def payoff_asian_put(paths):
     return np.maximum(K - avg_price, 0.0)
 
 rng = np.random.default_rng(seed=0)
-half = (N+1) // 2
-
-# path-dependent Z with shape (N, STEPS)
-Z_half = rng.standard_normal((half, STEPS))
-Z = np.vstack([Z_half, -Z_half])[:N] # antithetic variate
-del Z_half
-Z_batches = [Z[i:i+BATCH_SIZE] for i in range(0,N, BATCH_SIZE)]
-
-# terminal-only Z with shape (N, )
-Zt_half = rng.standard_normal(half)
-Zt = np.concatenate([Zt_half, -Zt_half])[:N]
-del Zt_half
-Zt_batches = [Zt[i:i+BATCH_SIZE] for i in range(0,N, BATCH_SIZE)]
 
 def simulate_paths(S0, drift, vol, Z_batch):
     increments = drift + vol * Z_batch
@@ -87,20 +74,25 @@ def mc_path_dependent(S0, T, sigma, payoff_fn):
     drift = (r - 0.5 * sigma**2) * dt
     vol = sigma * np.sqrt(dt)
 
-    for Zb in Z_batches:
+    batch_count = (N + BATCH_SIZE - 1) // BATCH_SIZE # ceiling
+
+    for _ in range(batch_count):
+        m = min(BATCH_SIZE, N-total_N)
+
+        # antithetic variates
+        half = (m+1) // 2
+        Z_half = rng.standard_normal((half, STEPS))
+        Zb = np.vstack((Z_half, -Z_half))[:m]
+
         paths = simulate_paths(S0, drift, vol, Zb)
         payoffs = payoff_fn(paths)
 
         total_payoff += payoffs.sum()
         total_sq += (payoffs ** 2).sum()
-        total_N += Zb.shape[0]
+        total_N += m
 
-        # free memory for this batch
-        del paths, payoffs
-
-    # Monte Carlo estimates
     mean_payoff = total_payoff / total_N
-    var_payoff = max(0.0, (total_sq / total_N) - mean_payoff**2) # for floating point errors
+    var_payoff = max(0.0, (total_sq / total_N) - mean_payoff**2) # to clamp floating point errors
     se = np.sqrt(var_payoff / total_N)
 
     price = discount * mean_payoff
@@ -116,17 +108,23 @@ def mc_terminal_only(S0, T, sigma, payoff_fn):
     drift = (r - 0.5 * sigma**2) * T
     vol = sigma * np.sqrt(T)
 
-    for Zb in Zt_batches:
+    batch_count = (N + BATCH_SIZE - 1) // BATCH_SIZE
+
+    for _ in range(batch_count):
+        m = min(BATCH_SIZE, N-total_N)
+
+        # antithetic variates
+        half = (m+1) // 2
+        Z_half = rng.standard_normal(half)
+        Zb = np.concatenate([Z_half, -Z_half])[:m]
+
         x = drift + vol * Zb
         ST = S0 * np.exp(x)
         payoffs = payoff_fn(ST)
 
         total_payoff += payoffs.sum()
         total_sq += (payoffs ** 2).sum()
-        total_N += Zb.shape[0]
-
-        # free memory for this batch
-        del x, ST, payoffs
+        total_N += m
 
     mean_payoff = total_payoff / total_N
     var_payoff = max(0.0, (total_sq / total_N) - mean_payoff**2)
