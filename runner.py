@@ -6,7 +6,7 @@ from config import FINNHUB_API_KEY, FINNHUB_TICKER, OPTION_TYPE
 from market_data.websocket_client import PriceFeed
 from market_data.yf_client import calculate_sigma
 from model.monte_carlo import option_price
-from utils import time_to_maturity, now, format_greeks
+from utils import time_to_maturity, now, format_greeks, format_output_str
 
 def pricing_thread(price_queue: Queue):
     sigma = calculate_sigma()
@@ -29,12 +29,13 @@ def pricing_thread(price_queue: Queue):
         T = time_to_maturity()
 
         price, se, greeks = option_price(S0, T, sigma, OPTION_TYPE)
-        timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
 
-        if se is None:
-            print(f"{timestamp}: Price = ${price:.2f} (deterministic)")
-        else:
-            print(f"{timestamp}: MC price = ${price:.2f}, MC SE = {se:.4f}")
+        output_str = format_output_str(OPTION_TYPE, price, se, S0)
+        print(output_str)
+        # if se is None:
+        #     print(f"{timestamp}: Price = ${price:.2f} (deterministic)")
+        # else:
+        #     print(f"{timestamp}: MC price = ${price:.2f}, MC SE = {se:.4f}")
 
         if greeks is not None:
             d, g, v, t, r = greeks
