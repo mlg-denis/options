@@ -4,6 +4,7 @@ from numpy import log, sqrt
 
 def calculate_sigma(): # annualised volatility
     data = yf.download(YF_TICKER, period="1y", progress=False, auto_adjust=True)
+    print("yFinance data downloaded")
     LAMBDA = 0.94 # how reactive is sigma
     
     if isinstance(data.columns, pd.MultiIndex):

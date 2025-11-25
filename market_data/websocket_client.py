@@ -18,6 +18,7 @@ class PriceFeed:
                 self.on_price(data[-1]["p"])
 
     def _on_open(self, ws):
+        print("WebSocket connected")
         sub = {"type": "subscribe", "symbol": self.symbol}
         ws.send(json.dumps(sub))
 

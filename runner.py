@@ -5,13 +5,13 @@ from time import sleep
 from config import FINNHUB_API_KEY, FINNHUB_TICKER, OPTION_TYPE
 from market_data.websocket_client import PriceFeed
 from market_data.yf_client import calculate_sigma
-from model.monte_carlo import mc_option_price
+from model.monte_carlo import option_price
 from utils import time_to_maturity, now, format_greeks
 
 def pricing_thread(price_queue: Queue):
     sigma = calculate_sigma()
     last_sigma_update = datetime.now(timezone.utc)
-    UPDATE_INTERVAL_SECONDS = 60  # seconds
+    UPDATE_INTERVAL_SECONDS = 60
 
     while True:
         S0 = price_queue.get()
@@ -28,8 +28,7 @@ def pricing_thread(price_queue: Queue):
 
         T = time_to_maturity()
 
-        price, se, greeks = mc_option_price(S0, T, sigma, OPTION_TYPE)
-
+        price, se, greeks = option_price(S0, T, sigma, OPTION_TYPE)
         timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
 
         if se is None:

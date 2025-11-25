@@ -105,7 +105,7 @@ def mc_terminal_only(S0, T, sigma, payoff_X):
     se_price = discount * se
     return price, se_price
 
-def mc_option_price(S0, T, sigma, option_type):
+def option_price(S0, T, sigma, option_type):
     o = option_type.upper()
     match o:
         case "EUROPEAN CALL":
